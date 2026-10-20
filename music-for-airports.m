@@ -2,20 +2,21 @@
 // "1/1" from Brian Eno's "Ambient 1: Music for Airports" (1978).
 //
 // Nothing plays on its own: every sound is triggered by a Claude Code hook event, and silence means
-// Claude is quiet. Each tool call plays the next 1 to 3 notes (chosen at random) of the 1/1 piano
-// melody, so over a session the real tune unfolds in fragments, paced by whatever Claude is doing. The place in the melody
-// is kept between turns.
+// Claude is quiet. Every event plays the next 1 to 3 notes (chosen at random) of the 1/1 piano
+// melody, in order and at their written pitch, so over a session the real tune unfolds in fragments,
+// paced by whatever Claude is doing. No event adds a note that is not the melody's next note.
+// The place in the melody is kept between turns.
 //
 //   Piano, for small, quick events such as tool calls. A soft electric-piano note voiced as if the
 //   tape were slowed to half speed, the way Eno slowed Robert Wyatt's piano loop: a blurred attack,
 //   dark and bassy, with slow tape wobble.
 //
-//   Voices, for bigger moments such as messages, prompts and finishing. A wordless "ahh" sung by
-//   three slightly detuned voices, swelling slowly in and out, singing the chord under the current
-//   point in the melody (after the sung loops of 2/1).
+//   Voices, for bigger moments such as messages, prompts and finishing. The same melody notes sung
+//   as a wordless "ahh" by three slightly detuned voices, swelling slowly in and out (after the sung
+//   loops of 2/1).
 //
-// Melody and chords are from M. Hoegeman's arrangement of 1/1 (D major, turning D mixolydian with a
-// C natural near the end). Everything goes through a long, dark, smeared echo and a hall reverb.
+// The melody is from M. Hoegeman's arrangement of 1/1 (D major). Everything goes through a long,
+// dark, smeared echo and a hall reverb.
 //
 //   music-for-airports event                 hook entry point: reads the hook payload (JSON) on stdin
 //   music-for-airports send <event> [tool]   sends a synthetic event, for trying sounds by hand
@@ -36,52 +37,25 @@ static const double kSampleRate = 44100;
 
 #pragma mark - The piece
 
-typedef NS_ENUM(int, Chord) { ChordDsus4, ChordGadd9, ChordD5, ChordD7sus4 };
-
-// MIDI note numbers for each chord, from the arrangement's chord symbols.
-static const int kChordNotes[][4] = {
-  [ChordDsus4] = { 62, 67, 69, 62 },   // D G A
-  [ChordGadd9] = { 55, 59, 62, 69 },   // G B D A
-  [ChordD5] = { 50, 57, 62, 57 },      // D A D
-  [ChordD7sus4] = { 62, 67, 69, 72 },  // D G A C: the C natural that turns 1/1 mixolydian
-};
-
-typedef struct {
-  int note;  // MIDI note number, as written
-  Chord chord;
-} MelodyNote;
-
-// The 1/1 piano melody, bar by bar, with the chord underneath each bar.
-static const MelodyNote kMelody[] = {
-  { 79, ChordDsus4 }, { 81, ChordDsus4 }, { 78, ChordDsus4 }, { 76, ChordDsus4 }, { 74, ChordDsus4 }, { 86, ChordDsus4 },  // bar 1
-  { 79, ChordDsus4 }, { 81, ChordDsus4 }, { 78, ChordDsus4 }, { 76, ChordDsus4 }, { 74, ChordGadd9 },                     // bars 2-4
-  { 79, ChordDsus4 }, { 81, ChordDsus4 }, { 78, ChordDsus4 }, { 76, ChordDsus4 }, { 74, ChordDsus4 }, { 86, ChordDsus4 },  // bar 5
-  { 78, ChordD5 }, { 81, ChordD5 }, { 79, ChordD5 }, { 74, ChordD5 },                                                     // bars 6-8
-  { 69, ChordGadd9 }, { 76, ChordGadd9 }, { 74, ChordGadd9 }, { 78, ChordGadd9 }, { 81, ChordGadd9 }, { 86, ChordGadd9 }, { 79, ChordGadd9 },  // bar 9
-  { 76, ChordGadd9 }, { 81, ChordGadd9 }, { 78, ChordGadd9 }, { 74, ChordGadd9 }, { 81, ChordGadd9 }, { 79, ChordGadd9 }, { 79, ChordGadd9 },  // bar 10
-  { 79, ChordD5 }, { 76, ChordD5 }, { 78, ChordD5 }, { 74, ChordD5 },                                                     // bar 11
-  { 81, ChordD7sus4 }, { 81, ChordD7sus4 }, { 74, ChordD7sus4 }, { 78, ChordD7sus4 }, { 78, ChordD7sus4 },                // bar 12
-  { 78, ChordDsus4 }, { 74, ChordDsus4 }, { 69, ChordDsus4 }, { 74, ChordDsus4 },                                         // bars 13-14
+// The 1/1 piano melody as MIDI note numbers, as written, bar by bar.
+static const int kMelody[] = {
+  79, 81, 78, 76, 74, 86,      // bar 1
+  79, 81, 78, 76, 74,          // bars 2-4
+  79, 81, 78, 76, 74, 86,      // bar 5
+  78, 81, 79, 74,              // bars 6-8
+  69, 76, 74, 78, 81, 86, 79,  // bar 9
+  76, 81, 78, 74, 81, 79, 79,  // bar 10
+  79, 76, 78, 74,              // bar 11
+  81, 81, 74, 78, 78,          // bar 12
+  78, 74, 69, 74,              // bars 13-14
 };
 enum { kMelodyLength = sizeof(kMelody) / sizeof(kMelody[0]) };
-
-static const int kHomeNote = 62;  // D4
 
 // The arrangement is written an octave above where it sounds (treble clef with an 8 below).
 static const int kSoundingOffset = -12;
 
-// The voices sing in the register of the sung loops on the record.
-static const double kVoiceLowestHz = 170;
-static const double kVoiceHighestHz = 430;
-
 static double frequencyOfNote(int midiNote) {
   return 440 * pow(2, (midiNote - 69) / 12.0);
-}
-
-static double inVoiceRegister(double frequency) {
-  while (frequency < kVoiceLowestHz) frequency *= 2;
-  while (frequency >= kVoiceHighestHz) frequency /= 2;
-  return frequency;
 }
 
 #pragma mark - Instruments
@@ -158,12 +132,12 @@ typedef struct {
   double delaySeconds;  // when to start, relative to the event
 } NoteRequest;
 
-// A tool call plays a short run of 1 to 3 consecutive melody notes, spaced like a slow phrase.
+// Each event plays a short run of 1 to 3 consecutive melody notes, spaced like a slow phrase.
 static const int kMaxRunLength = 3;
 static const double kRunSpacingSeconds = 0.55;
 static const double kRunSpacingJitterSeconds = 0.25;
-// Tool calls that arrive while a run is still playing queue behind it, one note each, so the
-// melody stays in order. Beyond this much queued time (a burst of parallel calls) they are skipped.
+// Events that arrive while a run is still playing queue behind it, one note each, so the melody
+// stays in order. Beyond this much queued time (a burst of parallel tool calls) they are skipped.
 static const double kMaxBacklogSeconds = 3;
 
 enum { kMaxNotesPerResponse = 3 };
@@ -174,71 +148,42 @@ typedef struct {
   double melodyBusySeconds;  // how long until the melody is free for the next run, if it moved
 } Response;
 
-static void addPianoAt(Response *response, int writtenNote, double volume, double delaySeconds) {
-  if (response->count < kMaxNotesPerResponse) {
-    response->notes[response->count++] = (NoteRequest){ InstrumentPiano, frequencyOfNote(writtenNote + kSoundingOffset), volume, delaySeconds };
-  }
-}
-
-static void addPiano(Response *response, int writtenNote, double volume) {
-  addPianoAt(response, writtenNote, volume, 0);
-}
-
-static void addVoice(Response *response, int midiNote, double volume) {
-  if (response->count < kMaxNotesPerResponse) {
-    response->notes[response->count++] = (NoteRequest){ InstrumentVoices, inVoiceRegister(frequencyOfNote(midiNote)), volume, 0 };
-  }
-}
-
-// Sings two notes of the chord under the current point in the melody.
-static void addChord(Response *response, Chord chord, double volume) {
-  addVoice(response, kChordNotes[chord][0], volume);
-  addVoice(response, kChordNotes[chord][2], volume * 0.7);
-}
-
 // MessageDisplay fires repeatedly while a message streams in; only its final piece makes a sound.
+// PostToolBatch would double the notes its tool calls already played, so it stays silent.
 static BOOL isAudible(NSDictionary *payload) {
   NSString *event = payload[@"hook_event_name"];
   if ([event isEqual:@"MessageDisplay"]) return [payload[@"final"] isEqual:@YES];
+  if ([event isEqual:@"PostToolBatch"]) return NO;
   return event != nil;
 }
 
-// `position` is the index of the next melody note. Tool calls advance it by the notes they play;
-// other events sound around the current point without moving it. `backlogSeconds` is how long the
-// melody is still busy with earlier runs.
+// Small, quick events play on the piano; bigger moments on the voices.
+static Instrument instrumentForEvent(NSString *event) {
+  static NSSet<NSString *> *pianoEvents;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    pianoEvents = [NSSet setWithArray:@[@"PreToolUse", @"PostToolUseFailure", @"PermissionRequest"]];
+  });
+  return [pianoEvents containsObject:event] ? InstrumentPiano : InstrumentVoices;
+}
+
+// Plays the next 1 to 3 melody notes and advances `position` (the index of the next note) past them.
+// `backlogSeconds` is how long the melody is still busy with earlier runs; while it is busy, an event
+// adds a single note after them, and beyond kMaxBacklogSeconds it adds nothing.
 static Response respond(NSDictionary *payload, int *position, double backlogSeconds) {
   Response response = { .count = 0, .melodyBusySeconds = 0 };
-  NSString *event = payload[@"hook_event_name"];
-  const MelodyNote *current = &kMelody[(*position + kMelodyLength - 1) % kMelodyLength];
-  void (^advance)(void) = ^{ *position = (*position + 1) % kMelodyLength; };
+  if (backlogSeconds > kMaxBacklogSeconds) return response;
 
-  if ([event isEqualToString:@"PreToolUse"] || [event isEqualToString:@"PostToolUseFailure"]) {
-    if (backlogSeconds > kMaxBacklogSeconds) return response;
-    BOOL failed = [event isEqualToString:@"PostToolUseFailure"];
-    int runLength = (failed || backlogSeconds > 0) ? 1 : 1 + (int)arc4random_uniform(kMaxRunLength);
-    double delay = backlogSeconds;
-    for (int i = 0; i < runLength; i++) {
-      addPianoAt(&response, kMelody[*position].note - (failed ? 12 : 0), failed ? 0.8 : 1.0, delay);
-      advance();
-      delay += kRunSpacingSeconds + kRunSpacingJitterSeconds * (arc4random_uniform(1000) / 1000.0);
-    }
-    response.melodyBusySeconds = delay;
-  } else if ([event isEqualToString:@"PermissionRequest"]) {
-    addPiano(&response, current->note, 0.7);
-    addPiano(&response, current->note + 12, 0.45);
-  } else if ([event isEqualToString:@"MessageDisplay"]) {
-    addVoice(&response, current->note, 0.8);
-    addVoice(&response, kChordNotes[current->chord][0], 0.6);
-  } else if ([event isEqualToString:@"UserPromptSubmit"] || [event isEqualToString:@"SubagentStart"] ||
-             [event isEqualToString:@"SubagentStop"] || [event isEqualToString:@"TaskCreated"] ||
-             [event isEqualToString:@"TaskCompleted"]) {
-    addChord(&response, current->chord, 0.8);
-  } else if ([event isEqualToString:@"Stop"] || [event isEqualToString:@"StopFailure"]) {
-    addChord(&response, ChordD5, 0.9);
-    addPiano(&response, kHomeNote, 0.7);
-  } else if ([event isEqualToString:@"PreCompact"] || [event isEqualToString:@"PostCompact"]) {
-    addVoice(&response, kChordNotes[current->chord][0], 0.7);
+  Instrument instrument = instrumentForEvent(payload[@"hook_event_name"]);
+  int runLength = backlogSeconds > 0 ? 1 : 1 + (int)arc4random_uniform(kMaxRunLength);
+  double delay = backlogSeconds;
+  for (int i = 0; i < runLength && response.count < kMaxNotesPerResponse; i++) {
+    double frequency = frequencyOfNote(kMelody[*position] + kSoundingOffset);
+    response.notes[response.count++] = (NoteRequest){ instrument, frequency, 1.0, delay };
+    *position = (*position + 1) % kMelodyLength;
+    delay += kRunSpacingSeconds + kRunSpacingJitterSeconds * (arc4random_uniform(1000) / 1000.0);
   }
+  response.melodyBusySeconds = delay;
   return response;
 }
 
