@@ -2,7 +2,7 @@
 
 A [Claude Code](https://code.claude.com) hook that turns what Claude is doing into a sparse, event-driven rendition of "1/1" from Brian Eno's *Ambient 1: Music for Airports* (1978).
 
-Nothing plays on its own. Every sound is triggered by a Claude Code hook event, so silence means Claude is quiet. Every event plays the next one to three notes of the 1/1 piano melody, in order and at their written pitch. No event adds a note that isn't the melody's next note. Over a session the tune unfolds in fragments, paced by whatever Claude is doing.
+Nothing plays on its own. Every sound is triggered by a Claude Code hook event, so silence means Claude is quiet. Every event plays the next one to three notes of the 1/1 piano melody, in order, at their written pitch and with their written rhythm. No event adds a note that isn't the melody's next note. Over a session the tune unfolds in fragments, paced by whatever Claude is doing.
 
 ## What you hear
 
@@ -11,7 +11,7 @@ Nothing plays on its own. Every sound is triggered by a Claude Code hook event, 
 | Tool call, tool failure, permission request | Piano |
 | Claude's message (final piece), new prompt, subagent start/stop, task created/completed, compaction, Claude finishes | Voices |
 
-Either way, the event plays the next 1–3 melody notes, chosen at random. `PostToolBatch` stays silent, because its tool calls have already played their notes.
+Either way, the event plays the next 1–3 melody notes, chosen at random. Each note lasts its written length from the score at 65 BPM, ties included. Rests are left out, so Claude's own pauses take their place. `PostToolBatch` stays silent, because its tool calls have already played their notes.
 
 There are two instruments, both synthesised (no samples):
 
@@ -25,7 +25,7 @@ Everything runs through a long, dark echo and a hall reverb. The place in the me
 - **One player process.** A single long-running process synthesises all audio with `AVAudioEngine`.
 - **The hook.** The hook command (`music-for-airports event`) reads the hook's JSON from stdin and passes it to the player with a distributed notification. If no player is running, it starts one.
 - **Exiting.** The player exits a few seconds after everything has rung out.
-- **Melody order.** Events that arrive while a phrase is still playing queue behind it, one note each, so the melody stays in order. During a burst of parallel tool calls with more than 3 seconds queued, the extra events are skipped.
+- **Melody order.** Events that arrive while a phrase is still playing queue behind it, one note each, so the melody stays in order. During a burst of parallel tool calls with more than 7 seconds queued, the extra events are skipped. Skipping drops events, not melody notes: the tune always resumes at its next note, and the music never trails Claude by more than a few seconds.
 - **Hooks run in the background.** They are registered with `async: true`, so they never slow Claude down.
 
 ## Install

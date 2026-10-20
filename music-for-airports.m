@@ -37,17 +37,25 @@ static const double kSampleRate = 44100;
 
 #pragma mark - The piece
 
-// The 1/1 piano melody as MIDI note numbers, as written, bar by bar.
-static const int kMelody[] = {
-  79, 81, 78, 76, 74, 86,      // bar 1
-  79, 81, 78, 76, 74,          // bars 2-4
-  79, 81, 78, 76, 74, 86,      // bar 5
-  78, 81, 79, 74,              // bars 6-8
-  69, 76, 74, 78, 81, 86, 79,  // bar 9
-  76, 81, 78, 74, 81, 79, 79,  // bar 10
-  79, 76, 78, 74,              // bar 11
-  81, 81, 74, 78, 78,          // bar 12
-  78, 74, 69, 74,              // bars 13-14
+// The arrangement's tempo marking. One eighth note lasts 60 / kTempoBpm / 2 seconds.
+static const double kTempoBpm = 65;
+
+typedef struct {
+  int note;     // MIDI note number, as written
+  int eighths;  // written length in eighth notes, including ties (rests are left to Claude's own pauses)
+} MelodyNote;
+
+// The 1/1 piano melody, bar by bar.
+static const MelodyNote kMelody[] = {
+  { 79, 1 }, { 81, 1 }, { 78, 1 }, { 76, 1 }, { 74, 1 }, { 86, 3 },             // bar 1
+  { 79, 1 }, { 81, 1 }, { 78, 1 }, { 76, 1 }, { 74, 6 },                        // bars 2-4
+  { 79, 1 }, { 81, 1 }, { 78, 1 }, { 76, 1 }, { 74, 1 }, { 86, 4 },             // bar 5
+  { 78, 1 }, { 81, 1 }, { 79, 2 }, { 74, 5 },                                   // bars 6-8
+  { 69, 2 }, { 76, 1 }, { 74, 1 }, { 78, 1 }, { 81, 1 }, { 86, 1 }, { 79, 1 },  // bar 9
+  { 76, 1 }, { 81, 1 }, { 78, 2 }, { 74, 1 }, { 81, 1 }, { 79, 1 }, { 79, 1 },  // bar 10
+  { 79, 1 }, { 76, 1 }, { 78, 2 }, { 74, 4 },                                   // bar 11
+  { 81, 1 }, { 81, 2 }, { 74, 1 }, { 78, 1 }, { 78, 2 },                        // bar 12
+  { 78, 2 }, { 74, 1 }, { 69, 1 }, { 74, 2 }, { 74, 10 },                       // bars 13-14
 };
 enum { kMelodyLength = sizeof(kMelody) / sizeof(kMelody[0]) };
 
@@ -132,13 +140,16 @@ typedef struct {
   double delaySeconds;  // when to start, relative to the event
 } NoteRequest;
 
-// Each event plays a short run of 1 to 3 consecutive melody notes, spaced like a slow phrase.
+// Each event plays a short run of 1 to 3 consecutive melody notes, each lasting its written length.
 static const int kMaxRunLength = 3;
-static const double kRunSpacingSeconds = 0.55;
-static const double kRunSpacingJitterSeconds = 0.25;
-// Events that arrive while a run is still playing queue behind it, one note each, so the melody
-// stays in order. Beyond this much queued time (a burst of parallel tool calls) they are skipped.
-static const double kMaxBacklogSeconds = 3;
+// Events that arrive while the melody is still sounding queue behind it, one note each, so the
+// melody stays in order. Beyond this much queued time (a burst of parallel tool calls) they are
+// skipped: the melody waits for the next event rather than trailing Claude.
+static const double kMaxBacklogSeconds = 7;
+
+static double writtenSeconds(const MelodyNote *note) {
+  return note->eighths * 60.0 / kTempoBpm / 2;
+}
 
 enum { kMaxNotesPerResponse = 3 };
 
@@ -178,10 +189,10 @@ static Response respond(NSDictionary *payload, int *position, double backlogSeco
   int runLength = backlogSeconds > 0 ? 1 : 1 + (int)arc4random_uniform(kMaxRunLength);
   double delay = backlogSeconds;
   for (int i = 0; i < runLength && response.count < kMaxNotesPerResponse; i++) {
-    double frequency = frequencyOfNote(kMelody[*position] + kSoundingOffset);
-    response.notes[response.count++] = (NoteRequest){ instrument, frequency, 1.0, delay };
+    const MelodyNote *note = &kMelody[*position];
+    response.notes[response.count++] = (NoteRequest){ instrument, frequencyOfNote(note->note + kSoundingOffset), 1.0, delay };
     *position = (*position + 1) % kMelodyLength;
-    delay += kRunSpacingSeconds + kRunSpacingJitterSeconds * (arc4random_uniform(1000) / 1000.0);
+    delay += writtenSeconds(note);
   }
   response.melodyBusySeconds = delay;
   return response;
