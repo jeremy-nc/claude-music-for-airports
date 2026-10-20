@@ -37,25 +37,27 @@ static const double kSampleRate = 44100;
 
 #pragma mark - The piece
 
-// The arrangement's tempo marking. One eighth note lasts 60 / kTempoBpm / 2 seconds.
-static const double kTempoBpm = 65;
+// The arrangement is marked 65 BPM; published estimates of the record put it at 60, which also
+// sits closer to the record's slowed-down, unhurried feel. One eighth note lasts 60 / kTempoBpm / 2 seconds.
+static const double kTempoBpm = 60;
 
 typedef struct {
-  int note;     // MIDI note number, as written
-  int eighths;  // written length in eighth notes, including ties (rests are left to Claude's own pauses)
+  int note;          // MIDI note number, as written
+  int eighths;       // written length in eighth notes, including ties
+  int restEighths;   // written rest after the note before the next one, in eighth notes
 } MelodyNote;
 
 // The 1/1 piano melody, bar by bar.
 static const MelodyNote kMelody[] = {
-  { 79, 1 }, { 81, 1 }, { 78, 1 }, { 76, 1 }, { 74, 1 }, { 86, 3 },             // bar 1
-  { 79, 1 }, { 81, 1 }, { 78, 1 }, { 76, 1 }, { 74, 6 },                        // bars 2-4
-  { 79, 1 }, { 81, 1 }, { 78, 1 }, { 76, 1 }, { 74, 1 }, { 86, 4 },             // bar 5
-  { 78, 1 }, { 81, 1 }, { 79, 2 }, { 74, 5 },                                   // bars 6-8
-  { 69, 2 }, { 76, 1 }, { 74, 1 }, { 78, 1 }, { 81, 1 }, { 86, 1 }, { 79, 1 },  // bar 9
-  { 76, 1 }, { 81, 1 }, { 78, 2 }, { 74, 1 }, { 81, 1 }, { 79, 1 }, { 79, 1 },  // bar 10
-  { 79, 1 }, { 76, 1 }, { 78, 2 }, { 74, 4 },                                   // bar 11
-  { 81, 1 }, { 81, 2 }, { 74, 1 }, { 78, 1 }, { 78, 2 },                        // bar 12
-  { 78, 2 }, { 74, 1 }, { 69, 1 }, { 74, 2 }, { 74, 10 },                       // bars 13-14
+  { 79, 1 }, { 81, 1 }, { 78, 1 }, { 76, 1 }, { 74, 1 }, { 86, 3 },                    // bar 1
+  { 79, 1 }, { 81, 1 }, { 78, 1 }, { 76, 1 }, { 74, 6, 14 },                           // bars 2-4, rest to bar 5
+  { 79, 1 }, { 81, 1 }, { 78, 1 }, { 76, 1 }, { 74, 1 }, { 86, 4 },                    // bar 5
+  { 78, 1 }, { 81, 1 }, { 79, 2 }, { 74, 5, 12 },                                      // bars 6-8, rest to bar 9
+  { 69, 2 }, { 76, 1 }, { 74, 1 }, { 78, 1 }, { 81, 1 }, { 86, 1 }, { 79, 1 },         // bar 9
+  { 76, 1 }, { 81, 1 }, { 78, 2 }, { 74, 1 }, { 81, 1 }, { 79, 1 }, { 79, 1 },         // bar 10
+  { 79, 1 }, { 76, 1 }, { 78, 2 }, { 74, 4, 1 },                                       // bar 11
+  { 81, 1 }, { 81, 2 }, { 74, 1 }, { 78, 1 }, { 78, 2 },                               // bar 12
+  { 78, 2 }, { 74, 1 }, { 69, 1 }, { 74, 2 }, { 74, 10, 2 },                           // bars 13-14, rest opening bar 1
 };
 enum { kMelodyLength = sizeof(kMelody) / sizeof(kMelody[0]) };
 
@@ -140,15 +142,16 @@ typedef struct {
   double delaySeconds;  // when to start, relative to the event
 } NoteRequest;
 
-// Each event plays a short run of 1 to 3 consecutive melody notes, each lasting its written length.
+// Each event plays a short run of 1 to 3 consecutive melody notes, each lasting its written length
+// and followed by its written rest, so phrases are separated by the score's silences.
 static const int kMaxRunLength = 3;
-// Events that arrive while the melody is still sounding queue behind it, one note each, so the
-// melody stays in order. Beyond this much queued time (a burst of parallel tool calls) they are
-// skipped: the melody waits for the next event rather than trailing Claude.
+// Events that arrive while the melody is still sounding or resting queue behind it, one note each,
+// so the melody stays in order. Beyond this much queued time (a burst of tool calls, or a long rest)
+// they are skipped: the melody waits for the next event rather than trailing Claude.
 static const double kMaxBacklogSeconds = 7;
 
-static double writtenSeconds(const MelodyNote *note) {
-  return note->eighths * 60.0 / kTempoBpm / 2;
+static double eighthsToSeconds(int eighths) {
+  return eighths * 60.0 / kTempoBpm / 2;
 }
 
 enum { kMaxNotesPerResponse = 3 };
@@ -192,7 +195,7 @@ static Response respond(NSDictionary *payload, int *position, double backlogSeco
     const MelodyNote *note = &kMelody[*position];
     response.notes[response.count++] = (NoteRequest){ instrument, frequencyOfNote(note->note + kSoundingOffset), 1.0, delay };
     *position = (*position + 1) % kMelodyLength;
-    delay += writtenSeconds(note);
+    delay += eighthsToSeconds(note->eighths + note->restEighths);
   }
   response.melodyBusySeconds = delay;
   return response;
