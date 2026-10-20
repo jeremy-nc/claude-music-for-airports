@@ -368,8 +368,8 @@ static int runPlayer(NSString *initialPayloadJson) {
     }
     [[NSString stringWithFormat:@"%d", position] writeToFile:positionPath atomically:YES encoding:NSUTF8StringEncoding error:nil];
   };
-  [[NSDistributedNotificationCenter defaultCenter] addObserverForName:kEventNotification object:nil queue:NSOperationQueue.mainQueue
-                                                           usingBlock:^(NSNotification *notification) {
+  id observer = [[NSDistributedNotificationCenter defaultCenter] addObserverForName:kEventNotification object:nil queue:NSOperationQueue.mainQueue
+                                                                         usingBlock:^(NSNotification *notification) {
     id json = notification.userInfo[kPayloadKey];
     if ([json isKindOfClass:[NSString class]]) receive(json);
   }];
@@ -395,13 +395,24 @@ static int runPlayer(NSString *initialPayloadJson) {
   [engine connect:reverb to:engine.mainMixerNode format:nil];
   if (![engine startAndReturnError:nil]) return 1;
 
-  // Stay alive while anything is sounding, or briefly after the last event in case more follow.
-  do {
+  // Run until nothing has sounded for kRingOutSeconds (so the echo and reverb have died away) and no
+  // event has arrived in that time. Any event, including one that arrives while winding down, keeps
+  // the player alive, so no note is cut off.
+  NSDate *silentSince = nil;
+  for (;;) {
     [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.5]];
-  } while (!atomic_load(&everythingSilent) || -lastEventAt.timeIntervalSinceNow < kRingOutSeconds);
-  [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:kRingOutSeconds]];
-  [engine stop];
+    if (!atomic_load(&everythingSilent)) {
+      silentSince = nil;
+      continue;
+    }
+    if (!silentSince) silentSince = [NSDate date];
+    if (-silentSince.timeIntervalSinceNow >= kRingOutSeconds && -lastEventAt.timeIntervalSinceNow >= kRingOutSeconds) break;
+  }
+  // Stop taking events and release the lock before stopping the audio, so any later event starts a
+  // new player instead of being sent to this one as it shuts down.
+  [[NSDistributedNotificationCenter defaultCenter] removeObserver:observer];
   close(lockFd);
+  [engine stop];
   return 0;
 }
 
