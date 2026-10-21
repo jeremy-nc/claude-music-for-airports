@@ -11,20 +11,21 @@ Nothing plays on its own. Every sound is triggered by a Claude Code hook event, 
 | Tool call, tool failure, permission request | Piano |
 | Claude's message (final piece), new prompt, subagent start/stop, task created/completed, compaction, Claude finishes | Voices |
 
-Either way, the event plays the next 1–3 melody notes, chosen at random. Each note lasts its written length from the score, ties included, at 60 BPM. That's slightly under the arrangement's marked 65, in line with published estimates of the record and its slowed-down feel. The score's rests after each phrase are kept too, so even a busy stretch of work has the record's silences between phrases. `PostToolBatch` stays silent, because its tool calls have already played their notes.
+Either way, the event plays the next 1–3 melody notes, chosen at random. Each note lasts its written length from the score, ties included, at 43 BPM, the record's own pace: its eighth notes fall about 0.7 seconds apart. Notes are tuned about 20 cents flat of A = 440 Hz, as measured on the record. The score's rests after each phrase are kept too, so even a busy stretch of work has the record's silences between phrases. `PostToolBatch` stays silent, because its tool calls have already played their notes.
 
-There are two instruments, both synthesised (no samples):
+There are two instruments and a background bed, all synthesised (no samples):
 
-- **Piano**, after 1/1. A soft FM electric piano voiced as if the tape were slowed to half speed, the way Eno slowed Robert Wyatt's piano loop. It has a blurred attack, dark tone and slow tape wobble.
+- **Piano**, after 1/1. An additive acoustic piano whose partial levels, decay rates and string stretch were measured from the record's own piano notes. Each note has six partials that decay in two stages, a slightly detuned second string that makes it shimmer, a felt hammer, and slow tape wobble. The hammer is played a little harder than on the record.
 - **Voices**, after the sung loops of 2/1. The same melody notes sung as a wordless "ahh" by three slightly detuned voices shaped by vowel formants, swelling in and out over seven seconds.
+- **Bed.** A quiet D drone with shifting chords above it (Dsus4, G over D, D5), following the chord under the melody's current bar, as heard under the record's melody. It fades in when Claude starts working and fades out when Claude finishes, or after 20 seconds without any event while Claude thinks at length. The next event brings it back.
 
-Everything runs through a long, dark echo and a hall reverb. The place in the melody is remembered between turns, and the tune loops when it reaches the end.
+Everything runs through a long, dark echo, a hall reverb and a gentle high-frequency shelf that keeps the piano's tone close to the record's. The place in the melody is remembered between turns, and the tune loops when it reaches the end.
 
 ## How it works
 
 - **One player process.** A single long-running process synthesises all audio with `AVAudioEngine`.
 - **The hook.** The hook command (`music-for-airports event`) reads the hook's JSON from stdin and passes it to the player with a distributed notification. If no player is running, it starts one.
-- **Exiting.** The player exits a few seconds after everything has rung out.
+- **Exiting.** The player exits a few seconds after everything, including the bed, has rung out.
 - **Melody order.** Events that arrive while a phrase is still playing, or during a rest, queue behind it, one note each, so the melody stays in order. Once more than 7 seconds is queued (a burst of tool calls, or one of the score's long rests), the extra events are skipped. Skipping drops events, not melody notes: the tune always resumes at its next note, and the music never trails Claude by more than a few seconds.
 - **Hooks run in the background.** They are registered with `async: true`, so they never slow Claude down.
 
