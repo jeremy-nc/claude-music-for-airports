@@ -56,7 +56,17 @@ To restart the melody from the opening bar, delete `~/.claude/hooks/music-for-ai
 
 ## Uninstall
 
-Remove the `music-for-airports event` entries from `~/.claude/settings.json` (or use `/hooks` in Claude Code), then delete `~/.claude/hooks/music-for-airports/`.
+```sh
+./uninstall.sh
+```
+
+The script removes the hook from `~/.claude/settings.json`, leaving your other settings and hooks untouched, and stops the player. Like the installer, it backs up `settings.json` first and validates the result before writing.
+
+It keeps the player and your place in the melody in `~/.claude/hooks/music-for-airports/`, so `./install.sh` brings it straight back. To delete that folder as well:
+
+```sh
+./uninstall.sh --purge
+```
 
 ## Credits
 
